@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>BACKROOMS: NIVEL 0</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:Arial,sans-serif;touch-action:none}
+canvas{display:block;width:100%;height:100%;background:#080808}
+#hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:2px 2px 3px #000}
+#cross{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;opacity:.85}
+#cross:before{width:2px;height:18px;left:8px}
+#cross:after{height:2px;width:18px;top:8px}
+#stats{position:absolute;left:14px;top:12px;font-weight:bold;font-size:16px}
+#ammo{position:absolute;right:14px;bottom:18px;font-size:25px;font-weight:bold}
+#msg{position:absolute;left:50%;top:15%;transform:translateX(-50%);font-size:18px;text-align:center;opacity:0;transition:.2s}
+#damage{position:absolute;inset:0;background:#b00000;opacity:0;transition:opacity .08s}
+#menu{position:fixed;inset:0;background:radial-gradient(circle,#514b25,#15150b 70%,#000);display:flex;align-items:center;justify-content:center;color:#fff;z-index:10}
+.panel{width:min(92%,520px);padding:30px;border:2px solid #c9b94e;background:rgba(10,10,5,.88);box-shadow:0 0 35px #000;text-align:center}
+h1{font-size:clamp(32px,9vw,62px);margin:0 0 5px;letter-spacing:4px;color:#e5d75d}
+.sub{color:#bbb;font-size:14px;margin-bottom:24px}
+button{width:100%;padding:16px;margin:7px 0;border:1px solid #d9ca62;background:#262615;color:#fff;font-size:17px;font-weight:bold;border-radius:5px}
+button:active{transform:scale(.98);background:#514d23}
+#controls{display:none;position:fixed;inset:0;z-index:5;pointer-events:none}
+#stick{position:absolute;left:22px;bottom:25px;width:125px;height:125px;border:2px solid rgba(255,255,255,.28);border-radius:50%;background:rgba(0,0,0,.18);pointer-events:auto}
+#knob{position:absolute;width:52px;height:52px;left:34px;top:34px;border-radius:50%;background:rgba(220,205,105,.55);border:2px solid #eee}
+#look{position:absolute;right:0;top:0;width:65%;height:72%;pointer-events:auto}
+#fire{position:absolute;right:24px;bottom:34px;width:88px;height:88px;border-radius:50%;background:rgba(170,40,25,.7);border:3px solid #eee;color:#fff;font-size:14px;pointer-events:auto}
+#run{position:absolute;left:164px;bottom:42px;width:65px;height:65px;border-radius:50%;background:rgba(50,50,50,.5);border:2px solid #aaa;color:#fff;pointer-events:auto}
+#help{font-size:12px;color:#aaa;line-height:1.5}
+@media(min-width:800px){#controls{display:none!important}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="stats">VIDA: <span id="hp">100</span><br>ENTIDADES: <span id="kills">0</span></div>
+  <div id="ammo">▰ <span id="bullets">18</span></div>
+  <div id="cross"></div>
+  <div id="msg"></div>
+  <div id="damage"></div>
+</div>
+
+<div id="menu">
+ <div class="panel">
+  <h1>BACKROOMS</h1>
+  <div class="sub">NIVEL 0 — THE THRESHOLD · 3D FPS</div>
+  <button id="start">ENTRAR</button><div style="font-size:11px;color:#777;margin-top:10px">Ambientación basada en documentación de la Backrooms Wiki; las mecánicas de videojuego son una adaptación.</div>
+  <div id="help">WASD / flechas: moverte · mouse: mirar · clic: disparar<br>En móvil: joystick izquierdo + arrastra la zona derecha + DISPARAR<br><br>Explora el laberinto, conserva recursos y busca una salida.</div>
+ </div>
+</div>
+
+<div id="controls">
+ <div id="stick"><div id="knob"></div></div>
+ <div id="look"></div>
+ <button id="run">CORRER</button>
+ <button id="fire">FUEGO</button>
+</div>
+
+<script>
+"use strict";
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+const hpEl=document.getElementById("hp"),ammoEl=document.getElementById("bullets"),killEl=document.getElementById("kills");
+const menu=document.getElementById("menu"),controls=document.getElementById("controls"),damage=document.getElementById("damage"),msg=document.getElementById("msg");
+let W=innerWidth,H=innerHeight,dpr=Math.min(devicePixelRatio||1,2);
+function resize(){W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;c.style.width=W+"px";c.style.height=H+"px";ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener("resize",resize);resize();
+
+const MAP=[
+"########################",
+"#......................#",
+"#..####......####......#",
+"#..#.............#.....#",
+"#..#..#####......#.....#",
+"#.....#...#........#####",
+"###...#...#...........##",
+"#.....#####..####......#",
+"#......................#",
+"#...####......##.......#",
+"#...#..#......##.......#",
+"#...#..#...............#",
+"#...####..#####........#",
+"#......................#",
+"#..####................#",
+"#...........####.......#",
+"#...........#..........#",
+"#...##......#.....####.#",
+"#......................#",
+"#......####............#",
+"#......................#",
+"########################"
+];
+const MW=MAP[0].length,MH=MAP.length;
+const FOV=Math.PI/2.15, RAYS=Math.min(700,Math.floor(W*.95)), MAXD=24;
+
+const player={x:2.5,y:2.5,a:0,hp:100,ammo:18,kills:0,shot:0,run:false};
+let enemies=[]; // Level 0 is normally empty; sightings are handled as rare anomalies.
+const keys={}; let running=false, last=performance.now(), zbuf=[];
+function wall(x,y){let ix=Math.floor(x),iy=Math.floor(y);return ix<0||iy<0||ix>=MW||iy>=MH||MAP[iy][ix]==="#"}
+function dist(a,b,c,d){return Math.hypot(a-c,b-d)}
+function move(dx,dy){
+ const r=.22;
+ if(!wall(player.x+dx+r*Math.sign(dx),player.y)) player.x+=dx;
+ if(!wall(player.x,player.y+dy+r*Math.sign(dy))) player.y+=dy;
+}
+function cast(angle){
+ let x=player.x,y=player.y,dx=Math.cos(angle),dy=Math.sin(angle),d=0;
+ while(d<MAXD){x+=dx*.035;y+=dy*.035;d+=.035;if(wall(x,y))return d}
+ return MAXD;
+}
+function render(){
+ ctx.clearRect(0,0,W,H);
+
+ // True FPS-style vertical composition: ceiling above, walls in the middle,
+ // carpet below. The horizon stays fixed so the player feels grounded.
+ const horizon=H*.485;
+
+ // Ceiling
+ const ceil=ctx.createLinearGradient(0,0,0,horizon);
+ ceil.addColorStop(0,"#070806");
+ ceil.addColorStop(.55,"#17170f");
+ ceil.addColorStop(1,"#4b4521");
+ ctx.fillStyle=ceil;
+ ctx.fillRect(0,0,W,horizon);
+
+ // Floor
+ const floor=ctx.createLinearGradient(0,horizon,0,H);
+ floor.addColorStop(0,"#39341b");
+ floor.addColorStop(.18,"#211f12");
+ floor.addColorStop(1,"#070706");
+ ctx.fillStyle=floor;
+ ctx.fillRect(0,horizon,W,H-horizon);
+
+ zbuf=new Array(RAYS);
+ const step=W/RAYS;
+
+ for(let i=0;i<RAYS;i++){
+   const a=player.a-FOV/2+FOV*(i/RAYS);
+   const raw=cast(a);
+   const d=Math.max(.05,raw*Math.cos(a-player.a));
+   zbuf[i]=d;
+
+   // Wall height grows dramatically as distance decreases.
+   const wallH=Math.min(H*2.25,(H*.96)/d);
+   const top=horizon-wallH*.52;
+   const bottom=horizon+wallH*.48;
+
+   // Distance-based yellow wallpaper.
+   const fog=Math.min(1,d/17);
+   const light=0.78+0.22*Math.sin(i*.11+performance.now()/1800);
+   const flick=(Math.sin(performance.now()/95+i*.07)>0.994)?-45:0;
+
+   let r=Math.floor((190*(1-fog)+38*fog)*light+flick);
+   let g=Math.floor((178*(1-fog)+35*fog)*light+flick);
+   let b=Math.floor((78*(1-fog)+14*fog)*light);
+   r=Math.max(18,Math.min(220,r));
+   g=Math.max(16,Math.min(210,g));
+   b=Math.max(6,Math.min(100,b));
+
+   ctx.fillStyle=`rgb(${r},${g},${b})`;
+   ctx.fillRect(i*step,top,step+1,bottom-top);
+
+   // Vertical wallpaper seams create scale and depth.
+   const seam=(Math.sin(i*0.43)*.5+.5);
+   if(seam>.982 && d<13){
+     ctx.fillStyle=`rgba(69,55,15,${.16+(1-fog)*.22})`;
+     ctx.fillRect(i*step,top,Math.max(1,step*.7),bottom-top);
+   }
+
+   // Subtle horizontal wallpaper joints.
+   if(d<11){
+     const jointY=top+(bottom-top)*.34;
+     ctx.fillStyle="rgba(76,60,18,.13)";
+     ctx.fillRect(i*step,jointY,step+1,2);
+   }
+
+   // Baseboard at the floor/wall boundary.
+   if(d<12){
+     ctx.fillStyle="rgba(47,40,18,.72)";
+     ctx.fillRect(i*step,bottom-4,step+1,5);
+   }
+
+   // Deep shadow toward the edges of the corridor.
+   ctx.fillStyle=`rgba(0,0,0,${Math.min(.7,d/21)})`;
+   ctx.fillRect(i*step,top,step+1,bottom-top);
+
+   // Perspective ceiling shadow: makes the top of the wall read as 3D.
+   ctx.fillStyle="rgba(0,0,0,.13)";
+   ctx.fillRect(i*step,top,step+1,Math.max(3,wallH*.06));
+ }
+
+ // Ceiling grid/panels projected into perspective.
+ // This is intentionally subtle so the ceiling reads as a real structure.
+ ctx.save();
+ ctx.globalAlpha=.16;
+ ctx.strokeStyle="#aaa06a";
+ ctx.lineWidth=1;
+
+ for(let row=1;row<=11;row++){
+   const yy=horizon-(horizon*.72)*(row/11);
+   ctx.beginPath();
+   ctx.moveTo(0,yy);
+   ctx.lineTo(W,yy);
+   ctx.stroke();
+ }
+
+ for(let col=-8;col<=8;col++){
+   const x=W/2+col*(W*.13);
+   ctx.beginPath();
+   ctx.moveTo(W/2+(x-W/2)*.08,horizon);
+   ctx.lineTo(x,0);
+   ctx.stroke();
+ }
+ ctx.restore();
+
+ // Fluorescent ceiling panels, placed in perspective.
+ for(let k=-5;k<=5;k++){
+   const offset=k*.24;
+   const a=offset;
+   const d=cast(player.a+a);
+   if(d<14){
+     const sx=W/2+Math.tan(a)/Math.tan(FOV/2)*W/2;
+     const yy=horizon-(H*.43/d);
+     const panelW=Math.max(4,52/d);
+     const panelH=Math.max(2,10/d);
+     const flick=(Math.sin(performance.now()/105+k*3.7)>-.88);
+     ctx.fillStyle=flick?"rgba(255,246,181,.42)":"rgba(255,246,181,.025)";
+     ctx.fillRect(sx-panelW/2,yy,panelW,panelH);
+     if(flick){
+       ctx.fillStyle="rgba(255,238,145,.06)";
+       ctx.fillRect(sx-panelW*1.8,yy-panelH*3,panelW*3.6,panelH*7);
+     }
+   }
+ }
+
+ // Carpet perspective texture.
+ ctx.save();
+ ctx.globalAlpha=.12;
+ ctx.strokeStyle="#81733b";
+ for(let n=1;n<15;n++){
+   const yy=horizon+(H-horizon)*(n/15);
+   ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy);ctx.stroke();
+ }
+ for(let n=-18;n<=18;n++){
+   const bx=W/2+n*55;
+   ctx.beginPath();ctx.moveTo(W/2, horizon);ctx.lineTo(bx,H);ctx.stroke();
+ }
+ ctx.restore();
+
+ renderAnomalies();
+ renderEnemies();
+
+ // Weapon model
+ ctx.save();
+ ctx.translate(W*.78,H*.78);
+ ctx.fillStyle="#111";
+ ctx.fillRect(-25,0,55,100);
+ ctx.fillStyle="#414141";
+ ctx.fillRect(-9,-80,18,95);
+ ctx.fillStyle="#151515";
+ ctx.fillRect(-17,-92,34,18);
+ ctx.fillStyle="#777";
+ ctx.fillRect(-4,-88,8,5);
+ ctx.restore();
+
+ // Vignette: makes the corridor feel deeper.
+ const vig=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.20,W/2,H/2,Math.max(W,H)*.72);
+ vig.addColorStop(0,"rgba(0,0,0,0)");
+ vig.addColorStop(.72,"rgba(0,0,0,.08)");
+ vig.addColorStop(1,"rgba(0,0,0,.48)");
+ ctx.fillStyle=vig;
+ ctx.fillRect(0,0,W,H);
+}
+
+function renderAnomalies(){
+ // Rare black figure glimpses: visual hallucination, not a normal enemy.
+ const t=performance.now()/1000;
+ if(Math.sin(t*.31+player.x*2.7+player.y)>0.992){
+   const side=Math.sin(t*3.1)>0?1:-1;
+   const sx=W/2+side*W*.30;
+   const size=H*.34;
+   ctx.globalAlpha=.32;
+   ctx.fillStyle="#000";
+   ctx.fillRect(sx-size*.12,H*.38,size*.24,size*.56);
+   ctx.beginPath();ctx.arc(sx,H*.33,size*.14,0,Math.PI*2);ctx.fill();
+   ctx.globalAlpha=1;
+ }
+ // Very rare red-room hallucination overlay.
+ if(Math.sin(t*.07+player.x*.8)>0.997){
+   ctx.fillStyle="rgba(100,0,0,.09)";ctx.fillRect(0,0,W,H);
+ }
+}
+
+function renderEnemies(){
+ const arr=enemies.filter(e=>e.hp>0).map(e=>{
+   let dx=e.x-player.x,dy=e.y-player.y,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx)-player.a;
+   while(a<-Math.PI)a+=Math.PI*2;while(a>Math.PI)a-=Math.PI*2;
+   return {...e,d,a};
+ }).filter(e=>Math.abs(e.a)<FOV*.62).sort((a,b)=>b.d-a.d);
+ for(const e of arr){
+   const sx=W/2+Math.tan(e.a)/(Math.tan(FOV/2))*W/2;
+   const size=Math.min(H*1.2,H*.75/e.d);
+   const col=Math.max(0,Math.floor((sx/W)*RAYS));
+   const blocked=zbuf[Math.max(0,Math.min(RAYS-1,col))]<e.d-.15;
+   if(blocked)continue;
+   const top=H/2-size*.58;
+   ctx.fillStyle="#15110d";ctx.fillRect(sx-size*.16,top+size*.25,size*.32,size*.72);
+   ctx.fillStyle="#080706";ctx.fillRect(sx-size*.25,top+size*.1,size*.5,size*.35);
+   ctx.fillStyle="#e5d25a";ctx.fillRect(sx-size*.15,top+size*.2,size*.08,size*.07);ctx.fillRect(sx+size*.07,top+size*.2,size*.08,size*.07);
+   ctx.fillStyle="#b42a1c";ctx.fillRect(sx-size*.16,top+size*.3,size*.32,size*.04);
+   ctx.fillStyle="#2b2420";ctx.fillRect(sx-size*.3,top+size*.55,size*.16,size*.45);ctx.fillRect(sx+size*.14,top+size*.55,size*.16,size*.45);
+   ctx.fillStyle="#f1d84d";ctx.fillRect(sx-size*.25,top-8,size*.5,4);
+   ctx.fillStyle="#222";ctx.fillRect(sx-size*.25,top-8,size*.5*(e.hp/e.max),4);
+ }
+}
+function shoot(){
+ if(!running||player.ammo<=0||performance.now()-player.shot<220)return;
+ player.shot=performance.now();player.ammo--;ammoEl.textContent=player.ammo;
+ let best=null,bestScore=.045;
+ for(const e of enemies)if(e.hp>0){
+   let dx=e.x-player.x,dy=e.y-player.y,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx)-player.a;
+   while(a<-Math.PI)a+=Math.PI*2;while(a>Math.PI)a-=Math.PI*2;
+   if(Math.abs(a)<bestScore && d<15 && cast(player.a)<d+.2){best=e;bestScore=Math.abs(a)}
+ }
+ if(best){best.hp-=35;if(best.hp<=0){player.kills++;killEl.textContent=player.kills}}
+}
+function enemyAI(dt){
+ // Faithful Level 0 behavior: there are no confirmed resident entities.
+ // Rare sightings can still create pressure without turning Level 0 into a monster arena.
+ if(Math.random()<dt*.055){
+   const messages=["¿Escuchaste eso?","El zumbido cambió.","No estás solo...","El pasillo no era así.","Sigue caminando."];
+   msg.textContent=messages[Math.floor(Math.random()*messages.length)];
+   msg.style.opacity=.9;
+   setTimeout(()=>msg.style.opacity=0,1100);
+ }
+}
+
+function gameOver(){running=false;menu.style.display="flex";controls.style.display="none";document.querySelector(".sub").textContent="HAS SIDO ATRAPADO";document.getElementById("start").textContent="REINTENTAR"}
+function victory(){running=false;menu.style.display="flex";controls.style.display="none";document.querySelector(".sub").textContent="HAS ENCONTRADO LA SALIDA";document.getElementById("start").textContent="JUGAR DE NUEVO"}
+function update(dt){
+ let sx=0,sy=0;
+ if(keys.w||keys.ArrowUp)sy+=1;if(keys.s||keys.ArrowDown)sy-=1;if(keys.a||keys.ArrowLeft)sx-=1;if(keys.d||keys.ArrowRight)sx+=1;
+ if(touchY!==0||touchX!==0){sx=touchX;sy=touchY}
+ let len=Math.hypot(sx,sy)||1,speed=(player.run?3.7:2.4)*dt;
+ const fx=Math.cos(player.a),fy=Math.sin(player.a),rx=-fy,ry=fx;
+ move((fx*(sy/len)+rx*(sx/len))*speed,(fy*(sy/len)+ry*(sx/len))*speed);
+ enemyAI(dt);
+ if(player.x>20.2&&player.y>19.2)victory();
+}
+function loop(now){
+ const dt=Math.min(.05,(now-last)/1000);last=now;
+ if(running){update(dt);render()}else render();
+ requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Desktop
+addEventListener("keydown",e=>{keys[e.key]=true;if(e.code==="Space")shoot();if(e.key==="Shift")player.run=true});
+addEventListener("keyup",e=>{keys[e.key]=false;if(e.key==="Shift")player.run=false});
+let mouseDown=false;
+c.addEventListener("mousedown",e=>{mouseDown=true;shoot()});
+addEventListener("mouseup",()=>mouseDown=false);
+addEventListener("mousemove",e=>{if(running&&mouseDown)player.a+=e.movementX*.003});
+
+// Mobile
+let touchX=0,touchY=0,stickId=null;
+const stick=document.getElementById("stick"),knob=document.getElementById("knob"),look=document.getElementById("look");
+function stickMove(t){const r=stick.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let x=t.clientX-cx,y=t.clientY-cy,m=Math.hypot(x,y),max=46;if(m>max){x=x/m*max;y=y/m*max}touchX=x/max;touchY=-y/max;knob.style.transform=`translate(${x}px,${y}px)`}
+stick.addEventListener("touchstart",e=>{e.preventDefault();stickId=e.changedTouches[0].identifier;stickMove(e.changedTouches[0])},{passive:false});
+stick.addEventListener("touchmove",e=>{for(const t of e.changedTouches)if(t.identifier===stickId)stickMove(t)},{passive:false});
+stick.addEventListener("touchend",e=>{for(const t of e.changedTouches)if(t.identifier===stickId){stickId=null;touchX=touchY=0;knob.style.transform=""}});
+let lookId=null,lastLX=0;
+look.addEventListener("touchstart",e=>{e.preventDefault();const t=e.changedTouches[0];lookId=t.identifier;lastLX=t.clientX},{passive:false});
+look.addEventListener("touchmove",e=>{e.preventDefault();for(const t of e.changedTouches)if(t.identifier===lookId){player.a+=(t.clientX-lastLX)*.008;lastLX=t.clientX}},{passive:false});
+look.addEventListener("touchend",()=>lookId=null);
+document.getElementById("fire").addEventListener("touchstart",e=>{e.preventDefault();shoot()},{passive:false});
+document.getElementById("run").addEventListener("touchstart",()=>player.run=true);
+document.getElementById("run").addEventListener("touchend",()=>player.run=false);
+
+let audioCtx=null, humGain=null;
+function startAmbience(){
+ try{
+   audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+   if(audioCtx.state==="suspended")audioCtx.resume();
+   if(humGain)return;
+   const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+   osc.type="sine"; osc.frequency.value=59;
+   gain.gain.value=.018; osc.connect(gain).connect(audioCtx.destination); osc.start();
+   humGain=gain;
+   setInterval(()=>{
+     if(!humGain)return;
+     const pulse=.012+Math.random()*.012;
+     humGain.gain.setTargetAtTime(pulse,audioCtx.currentTime,.05);
+   },700+Math.random()*900);
+ }catch(e){}
+}
+document.getElementById("start").onclick=()=>{
+ player.x=2.5;player.y=2.5;player.a=0;player.hp=100;player.ammo=12;player.kills=0;
+ enemies=[];
+ hpEl.textContent=100;ammoEl.textContent=12;killEl.textContent=0;
+ menu.style.display="none";running=true;startAmbience();
+ if("ontouchstart" in window)controls.style.display="block";
+};
+</script>
+</body>
+</html>
